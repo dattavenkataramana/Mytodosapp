@@ -1,76 +1,79 @@
 const express = require('express');
-const sqlite = require('sqlite')
-const sqlite3 = require('sqlite3').verbose();
-const cors = require("cors")
+const path = require('path');
+const {open} = require('sqlite');
+const sqlite3 = require('sqlite3')
+const bodyParser = require('body-parser');
+const cors = require('cors')
 const app = express();
-app.use(cors())
-const PORT = process.env.PORT || 3000;
- 
-const db = new sqlite3.Database('./todos.db');
+app.use(bodyParser.json());
+app.use(cors());
+app.use(express.json()); 
 
+const dbPath = path.join(__dirname,"datatodos.db");
 
-db.serialize(() => {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS todos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task TEXT NOT NULL,
-      completed BOOLEAN DEFAULT 0
-    )
-  `);
-});
+let db = null 
 
-app.use(express.json());
-
- 
-app.get('/todos', (req, res) => {
-  db.all('SELECT * FROM todos', (err, rows) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
+const initializeDbAndServer = async ()=>{
+    try{
+        db = await open({
+            filename:dbPath,
+            driver:sqlite3.Database,
+        }) 
+        app.listen(3000,()=>{
+            console.log(`server running at http://localhost:3000`)
+        })
+    }catch(e){
+        console.log(`DB Error :${e.message}`);
+        process.exit(1)
     }
-    res.json(rows);
-  });
-});
+}
 
-app.post('/todos', (req, res) => {
-  const { task } = req.body;
-  if (!task) {
-    res.status(400).json({ error: 'Task is required' });
-    return;
-  }
-  db.run('INSERT INTO todos (task) VALUES (?)', [task], function(err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
+
+initializeDbAndServer()
+
+app.get('/todos', async (req, res) => {
+    try {
+        const rows = await db.all('SELECT * FROM todos');
+        res.json(rows);
+    } catch (error) {
+        console.error(`Error fetching todos: ${error.message}`);
+        res.status(500).json({ error: 'Internal server error' });
     }
-    res.json({ id: this.lastID, task: task, completed: false });
-  });
 });
 
-app.put('/todos/:id', (req, res) => {
-  const { id } = req.params;
-  const { task, completed } = req.body;
-  db.run('UPDATE todos SET task=?, completed=? WHERE id=?', [task, completed, id], function(err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
+app.post('/todos', async (req, res) => {
+    const { task } = req.body;
+    if (!task) {
+        return res.status(400).json({ error: 'Task is required' });
     }
-    res.json({ message: 'Todo updated successfully' });
-  });
-});
-
-app.delete('/todos/:id', (req, res) => {
-  const { id } = req.params;
-  db.run('DELETE FROM todos WHERE id=?', id, function(err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
+    try {
+        const result = await db.run('INSERT INTO todos (task) VALUES (?)', [task]);
+        res.json({ id: result.lastID, task: task, completed: false });
+    } catch (error) {
+        console.error(`Error adding todo: ${error.message}`);
+        res.status(500).json({ error: 'Internal server error' });
     }
-    res.json({ message: 'Todo deleted successfully' });
-  });
 });
 
- 
-app.listen(PORT, () => {
-  console.log(`Server is Running on port http://localhost:${PORT}`);
+app.put('/todos/:id', async (req, res) => {
+    const { id } = req.params;
+    const { task, completed } = req.body;
+    try {
+        await db.run('UPDATE todos SET task=?, completed=? WHERE id=?', [task, completed, id]);
+        res.json({ message: 'Todo updated successfully' });
+    } catch (error) {
+        console.error(`Error updating todo: ${error.message}`);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+app.delete('/todos/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        await db.run('DELETE FROM todos WHERE id=?', id);
+        res.json({ message: 'Todo deleted successfully' });
+    } catch (error) {
+        console.error(`Error deleting todo: ${error.message}`);
+        res.status(500).json({ error: 'Internal server error' });
+    }
 });
